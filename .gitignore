@@ -1,0 +1,4 @@
+/node_modules
+../glove_py
+glove_py/
+embeddings/glove.6B/
