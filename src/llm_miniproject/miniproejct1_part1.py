@@ -4,8 +4,10 @@ import numpy as np
 from datasets import load_dataset
 import time
 
+from nltk import word_tokenize
+
 class TextSimilarityModel:
-    def __init__(self, corpus_name, rel_name, model_name='all-MiniLM-L6-v2', top_k=10):
+    def __init__(self, corpus_name, rel_name, model_name='all-MiniLM-L6-v2', top_k=10, embeddings_dict = {}):
         """
         Initialize the model with datasets and pre-trained sentence transformer.
         """
@@ -14,6 +16,8 @@ class TextSimilarityModel:
         self.rel_name = rel_name
         self.top_k = top_k
         self.load_data()
+        self.glove_file_path = "../../embeddings/glove.6B/"
+        self.embeddings = embeddings_dict
 
 
     def load_data(self):
@@ -54,7 +58,36 @@ class TextSimilarityModel:
         """
         #TODO Put your code here. 
         ###########################################################################
-       
+
+        # This is not ideal as we will reload the glove each time, but this is a workable first draft
+        if len(self.embeddings.keys()) == 0:
+            with open(glove_file_path, 'r') as f:
+                for line in f:
+                    values = line.split()
+                    word = values[0]
+                    vector = np.asarray(values[1:], "float32")
+                    self.embeddings[word] = vector
+
+        sentence_embeddings = []
+        for sent in sentences:
+            word_embeddings = []
+            words = word_tokenize(sent, language='english')
+            for word in words:
+                vec = self.embeddings.get(word.lower())
+                if vec is not None:
+                    word_embeddings.append(vec)
+            word_embeddings = np.average(np.array(word_embeddings), axis=0)
+
+            #Appends all 0s if a sentence has no match, same dimensions as the embeddings
+            if ~np.isnan(word_embeddings).all():
+                sentence_embeddings.append(word_embeddings)
+            else:
+                sentence_embeddings.append(np.zeros(len(self.embeddings['the'])))
+                
+
+        
+        return np.array(sentence_embeddings)
+               
         ###########################################################################
 
     def rank_documents(self, encoding_method='sentence_transformer'):
@@ -65,8 +98,8 @@ class TextSimilarityModel:
             Example format {2: [125, 673], 35: [900, 822]}
         """
         if encoding_method == 'glove':
-            query_embeddings = self.encode_with_glove("glove.6B.50d.txt", self.queries)
-            document_embeddings = self.encode_with_glove("glove.6B.50d.txt", self.documents)
+            query_embeddings = self.encode_with_glove(self.glove_file_path+"glove.6B.50d.txt", self.queries)
+            document_embeddings = self.encode_with_glove(self.glove_file_path+"glove.6B.50d.txt", self.documents)
         elif encoding_method == 'sentence_transformer':
             query_embeddings = self.model.encode(self.queries)
             document_embeddings = self.model.encode(self.documents)
@@ -76,6 +109,15 @@ class TextSimilarityModel:
         #TODO Put your code here.
         ###########################################################################
       
+        similarities = cosine_similarity(query_embeddings, document_embeddings)
+        indices_ranked = np.argsort(-similarities, axis=1)
+        sorted_doc_ids = np.take(self.document_ids, indices_ranked)
+
+        self.query_id_to_ranked_doc_ids = {}
+
+        for i, name in enumerate(self.query_ids):
+            self.query_id_to_ranked_doc_ids[name] = sorted_doc_ids[i]
+
         ###########################################################################
 
     @staticmethod
@@ -94,6 +136,17 @@ class TextSimilarityModel:
         """
          #TODO Put your code here. 
         ###########################################################################
+
+        mAP = []
+
+        for query in self.query_ids:
+            rel = self.query_id_to_relevant_doc_ids[query]
+            rank = self.query_id_to_ranked_doc_ids[query]
+            mAP.append(self.average_precision(rel, rank))
+            
+        print(mAP)
+        
+        return np.mean(np.array(mAP))
         
         ###########################################################################
 
@@ -104,10 +157,25 @@ class TextSimilarityModel:
         
         """
         #TODO Put your code here. 
+        print("embedding queries")
         query_embedding = self.model.encode(example_query)
+        print(query_embedding.shape)
+        print("embedding documents")
         document_embeddings = self.model.encode(self.documents)
+        print(document_embeddings.shape)
         ###########################################################################
-      
+        print("getting similarities")
+
+        similarities = cosine_similarity(query_embedding.reshape(1, -1), document_embeddings)
+        indices_ranked = np.argsort(similarities, axis=1)[:,-10:]
+        sorted_doc_ids = np.take(self.document_ids, indices_ranked)
+        sorted_docs = np.take(self.documents, indices_ranked)
+        self.top_k = sorted_doc_ids
+
+        # print(f"The top 10 documents related to this query are:")
+        for doc in sorted_docs:
+            print(doc)
+
         ###########################################################################
 
 
